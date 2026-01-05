@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - build/security
 
 env:
   REGISTRY: ${{ vars.REGISTRY || 'quay.io' }}
@@ -62,8 +63,38 @@ jobs:
           mvn versions:set -DnewVersion=${{ needs.generate-version.outputs.version }}
           mvn clean install deploy -Poci -DskipTests -DskipITs -Dimage.tag=${{ needs.generate-version.outputs.version }} -Dimage.registry="${{ env.REGISTRY }}" -Dimage.repository="${{ env.REPOSITORY }}"
 
+      - name: Scan Docker image with Anchore / Grype
+        uses: anchore/scan-action@v7
+        with:
+          image-reference: ${{ env.REGISTRY }}/${{ env.REPOSITORY }}:${{ needs.generate-version.outputs.version }}
+  dast:
+    name: Dynamic Analysis (DAST)
+    runs-on: ubuntu-latest
+    needs:
+      - build-and-push
+    services:
+      app:
+        image: ${{ env.REGISTRY }}/${{ env.REPOSITORY }}:${{ needs.generate-version.outputs.version }}
+        ports:
+          - 8080:8080
+        options: >-
+          --health-cmd "curl -f http://localhost:8080/actuator/health || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Wait for app to be ready
+        run: sleep 20
+
+      - name: Run OWASP ZAP Baseline Scan
+        uses: zaproxy/action-baseline@latest
+        with:
+          target: 'http://localhost:8080'
+          failOnWarning: true
   git-release:
-    needs: ["generate-version", "build-and-push"]
+    needs: [ "generate-version", "build-and-push" ]
     runs-on: ubuntu-latest
 
     steps:
