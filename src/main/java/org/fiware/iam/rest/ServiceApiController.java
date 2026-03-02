@@ -34,11 +34,9 @@ import java.util.Optional;
 @RequiredArgsConstructor
 public class ServiceApiController implements ServiceApi {
 
-    private static final String PATH_GET_SERVICE = "/service/{id}";
     private final ServiceRepository serviceRepository;
     private final ScopeEntryRepository scopeEntryRepository;
     private final ServiceMapper serviceMapper;
-
 
     @Override
     public HttpResponse<Object> createService(@NonNull ServiceVO serviceVO) {
@@ -53,7 +51,9 @@ public class ServiceApiController implements ServiceApi {
         Service savedService = serviceRepository.save(mappedService);
 
         return HttpResponse.created(
-                URI.create(PATH_GET_SERVICE.replace("{id}", savedService.getId())));
+                URI.create(
+                        ServiceApi.PATH_GET_SERVICE.replace(
+                                "{id}", savedService.getId())));
     }
 
     @Transactional
@@ -112,12 +112,23 @@ public class ServiceApiController implements ServiceApi {
 
         Page<Service> requestedPage = serviceRepository.findAll(
                 Pageable.from(page, pageSize, Sort.of(Sort.Order.asc("id"))));
+        List<Service> services = requestedPage.getContent();
+
+        if (!services.isEmpty()) {
+            List<String> serviceIds = requestedPage.getContent().stream()
+                    .map(Service::getId)
+                    .toList();
+            List<ScopeEntry> allScopes = serviceRepository.findScopesByServiceIds(serviceIds);
+            Map<String, List<ScopeEntry>> scopesByServiceId = allScopes.stream()
+                    .collect(Collectors.groupingBy(scope -> scope.getService().getId()));
+            services.forEach(service -> service.setOidcScopes(scopesByServiceId.get(service.getId())));
+        }
         return HttpResponse.ok(
                 new ServicesVO()
                         .total((int) requestedPage.getTotalSize())
                         .pageNumber(page)
-                        .pageSize(requestedPage.getContent().size())
-                        .services(requestedPage.getContent().stream().map(serviceMapper::map).toList()));
+                        .pageSize(services.size())
+                        .services(services.stream().map(serviceMapper::map).toList()));
     }
 
     @Transactional
